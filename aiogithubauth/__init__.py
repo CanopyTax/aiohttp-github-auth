@@ -12,7 +12,7 @@ gh_org = None
 
 def github_auth_middleware(*, github_id, github_secret, github_org,
                            whitelist_handlers=None, api_unauthorized=False):
-    """ Middleware to do github auth
+    """ Middleware for github authentication
     :param github_id: github client id
     :param github_secret: github secret
     :param github_org: github organization for which people are authorized
@@ -36,9 +36,9 @@ def github_auth_middleware(*, github_id, github_secret, github_org,
             session = await get_session(request)
             params = urllib.parse.parse_qs(request.query_string)
             user = session.get('User')
-            if user:  # already authenticated
+            if user:  # Already authenticated
                 request['user'] = user
-            elif handler in whitelist_handlers:  # dont need authentication
+            elif handler in whitelist_handlers:  # We don't need authentication
                 pass
             elif handler == handle_github_callback and \
                     session.get('github_state'):
@@ -71,8 +71,8 @@ async def handle_github_callback(request):
     params = urllib.parse.parse_qs(request.query_string)
     session = await get_session(request)
 
-    # check conditions
-    if (session.get('github_state') !=  # gh state is incorrect
+    # Check conditions
+    if (session.get('github_state') !=  # Github_state is incorrect
                 params.get('state', [None])[0]):
         print('bad state returned')
         """
@@ -88,7 +88,7 @@ async def handle_github_callback(request):
     code = params.get('code', [None])[0]
     if not code:
         return web.HTTPNotFound(body=b'Page not found. Its possible the '
-                                     b'session timed out while authenting.')
+                                     b'session timed out while authenticating.')
     otoken, _ = await gh.get_access_token(code)
     gh = GithubClient(
         client_id=gh_id,
@@ -105,7 +105,7 @@ async def handle_github_callback(request):
     for org in orgs:
         if org.get('login') == gh_org:
 
-            # swap github_state for user
+            # Swap github_state for user
             session.pop('github_state', None)
             session['User'] = user.get('login')
             location = session.pop('desired_location')
