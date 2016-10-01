@@ -88,7 +88,7 @@ async def handle_github_callback(request):
     code = params.get('code', [None])[0]
     if not code:
         return web.HTTPNotFound(body=b'Page not found. Its possible the '
-                                     b'session timed out while authenting.')
+                                     b'session timed out while authentic.')
     otoken, _ = await gh.get_access_token(code)
     gh = GithubClient(
         client_id=gh_id,
