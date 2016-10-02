@@ -40,7 +40,7 @@ def github_auth_middleware(*, github_id, github_secret, github_org,
                 request['user'] = user
             elif handler in whitelist_handlers:  # We don't need authentication
                 pass
-            elif handler == handle_github_callback and \
+            elif handler.__name__ == 'handle_github_callback' and \
                     session.get('github_state'):
                 # Attempting to authenticate - let them pass through
                         pass
@@ -67,57 +67,76 @@ def github_auth_middleware(*, github_id, github_secret, github_org,
     return middleware_factory
 
 
-async def handle_github_callback(request):
-    params = urllib.parse.parse_qs(request.query_string)
-    session = await get_session(request)
+class GithubCallbackHandler:
+    def __init__(self, *, on_login_success=None):
+        self._on_login_success = on_login_success
 
-    # Check conditions
-    if (session.get('github_state') !=  # Github_state is incorrect
-                params.get('state', [None])[0]):
-        print('bad state returned')
-        """
-        Codes are the same, we are in the middle of
-        authenticating and things look ok, carry on
-        """
+    async def handle_github_callback(self, request):
+        params = urllib.parse.parse_qs(request.query_string)
+        session = await get_session(request)
+
+        # Check conditions
+        if (session.get('github_state') !=  # Github_state is incorrect
+                    params.get('state', [None])[0]):
+            print('bad state returned')
+            """
+            Codes are the same, we are in the middle of
+            authenticating and things look ok, carry on
+            """
+            return web.HTTPForbidden()
+
+        gh = GithubClient(
+            client_id=gh_id,
+            client_secret=gh_secret
+        )
+        code = params.get('code', [None])[0]
+        if not code:
+            return web.HTTPNotFound(body=b'Page not found. Its possible the '
+                                         b'session timed out while authenticating.')
+        otoken, _ = await gh.get_access_token(code)
+        gh = GithubClient(
+            client_id=gh_id,
+            client_secret=gh_secret,
+            access_token=otoken
+        )
+        req = await gh.request('GET', 'user')
+        user = await req.json()
+        req.close()
+        req = await gh.request('GET', 'user/orgs')
+        orgs = await req.json()
+        req.close()
+
+        if self._on_login_success is not None:
+            await self._on_login_success(user)
+
+        for org in orgs:
+            if org.get('login') == gh_org:
+
+                # Swap github_state for user
+                session.pop('github_state', None)
+                session['User'] = user.get('login')
+                location = session.pop('desired_location')
+                return web.HTTPFound(location)
+
         return web.HTTPForbidden()
-
-    gh = GithubClient(
-        client_id=gh_id,
-        client_secret=gh_secret
-    )
-    code = params.get('code', [None])[0]
-    if not code:
-        return web.HTTPNotFound(body=b'Page not found. Its possible the '
-                                     b'session timed out while authenticating.')
-    otoken, _ = await gh.get_access_token(code)
-    gh = GithubClient(
-        client_id=gh_id,
-        client_secret=gh_secret,
-        access_token=otoken
-    )
-    req = await gh.request('GET', 'user')
-    user = await req.json()
-    req.close()
-    req = await gh.request('GET', 'user/orgs')
-    orgs = await req.json()
-    req.close()
-
-    for org in orgs:
-        if org.get('login') == gh_org:
-
-            # Swap github_state for user
-            session.pop('github_state', None)
-            session['User'] = user.get('login')
-            location = session.pop('desired_location')
-            return web.HTTPFound(location)
-
-    return web.HTTPForbidden()
 
 
 def add_github_auth_middleware(app,
                                cookie_key=None,
                                cookie_name='aiogithubauth',
+                               on_login_success=None,
                                **kwargs):
+    """
+    Adds the middleware to the application and registers required
+    oauth2 handler URLs on the application instance.
+
+    :param app: aiohttp application
+    :param cookie_key: Optional cookie key, used for signing
+    :param cookie_name: Optional name of the cookie
+    :param on_login_success: Optional coroutine to handle the logged in user
+                             if the login was successful. The success handler
+                             needs to accept a user as the only parameter.
+    """
     if cookie_key is None:
         print('creating new cookie secret')
         cookie_key = os.urandom(16).hex()
@@ -130,5 +149,6 @@ def add_github_auth_middleware(app,
         github_auth_middleware(**kwargs)
     ]
 
+    github_handler = GithubCallbackHandler(on_login_success=on_login_success)
     app.router.add_route('GET', '/oauth_callback/github',
-                         handle_github_callback)
+                         github_handler.handle_github_callback)
